@@ -1,6 +1,6 @@
 from math import sqrt
 
-from numpy import (array, unravel_index, nditer, linalg, random, subtract, max,
+from numpy import (array, unravel_index, nditer, linalg, random, subtract,
                    power, exp, pi, zeros, ones, arange, outer, meshgrid, dot,
                    logical_and, mean, std, cov, argsort, linspace, transpose,
                    einsum, prod, nan, sqrt, hstack, diff, argmin, multiply)
@@ -145,7 +145,7 @@ class MiniSom(object):
 
         activation_distance : string, optional (default='euclidean')
             Distance used to activate the map.
-            Possible values: 'euclidean', 'cosine', 'manhattan', 'chebyshev'
+            Possible values: 'euclidean', 'cosine', 'manhattan'
 
         random_seed : int, optional (default=None)
             Random seed to use.
@@ -201,8 +201,7 @@ class MiniSom(object):
 
         distance_functions = {'euclidean': self._euclidean_distance,
                               'cosine': self._cosine_distance,
-                              'manhattan': self._manhattan_distance,
-                              'chebyshev': self._chebyshev_distance}
+                              'manhattan': self._manhattan_distance}
 
         if activation_distance not in distance_functions:
             msg = '%s not supported. Distances available: %s'
@@ -285,9 +284,6 @@ class MiniSom(object):
     def _manhattan_distance(self, x, w):
         return linalg.norm(subtract(x, w), ord=1, axis=-1)
 
-    def _chebyshev_distance(self, x, w):
-        return max(subtract(x, w), axis=-1)
-
     def _check_iteration_number(self, num_iteration):
         if num_iteration < 1:
             raise ValueError('num_iteration must be > 1')
@@ -327,6 +323,30 @@ class MiniSom(object):
         g = self.neighborhood(win, sig)*eta
         # w_new = eta * neighborhood_function * (x-w)
         self._weights += einsum('ij, ijk->ijk', g, x-self._weights)
+
+    def update_perso(self, x, win, t, max_iteration):
+        """Updates the weights of the neurons.
+
+        Parameters
+        ----------
+        x : np.array
+            Current pattern to learn.
+        win : tuple
+            Position of the winning neuron for x (array or tuple).
+        t : int
+            Iteration index
+        max_iteration : int
+            Maximum number of training itarations.
+        """
+        eta = self._decay_function(self._learning_rate, t, max_iteration)
+        # sigma and learning rate decrease with the same rule
+        sig = self._decay_function(self._sigma, t, max_iteration)
+        # improves the performances
+        g = self.neighborhood(win, sig)*eta
+        # w_new = eta * neighborhood_function * (x-w)
+        self._weights += einsum('ij, ijk->ijk', g, x-self._weights)
+
+        return sig, eta #### return
 
     def quantization(self, data):
         """Assigns a code book (weights vector of the winning neuron)
@@ -463,6 +483,35 @@ class MiniSom(object):
         um = um.sum(axis=2)
         return um/um.max()
 
+    def distance_map_perso(self):
+        """Returns the distance map of the weights.
+        Each cell is the normalised sum of the distances between
+        a neuron and its neighbours. Note that this method uses
+        the euclidean distance."""
+        um = zeros((self._weights.shape[0],
+                    self._weights.shape[1],
+                    8))  # 2 spots more for hexagonal topology
+
+        ii = [[0, -1, -1, -1, 0, 1, 1, 1]]*2
+        jj = [[-1, -1, 0, 1, 1, 1, 0, -1]]*2
+
+        if self.topology == 'hexagonal':
+            ii = [[1, 1, 1, 0, -1, 0], [0, 1, 0, -1, -1, -1]]
+            jj = [[1, 0, -1, -1, 0, 1], [1, 0, -1, -1, 0, 1]]
+
+        for x in range(self._weights.shape[0]):
+            for y in range(self._weights.shape[1]):
+                w_2 = self._weights[x, y]
+                e = y % 2 == 0   # only used on hexagonal topology
+                for k, (i, j) in enumerate(zip(ii[e], jj[e])):
+                    if (x+i >= 0 and x+i < self._weights.shape[0] and
+                            y+j >= 0 and y+j < self._weights.shape[1]):
+                        w_1 = self._weights[x+i, y+j]
+                        um[x, y, k] = fast_norm(w_2-w_1)
+
+        um = um.sum(axis=2)
+        return um #### doesn't normalize
+
     def activation_response(self, data):
         """
             Returns a matrix where the element i,j is the number of times
@@ -496,7 +545,7 @@ class MiniSom(object):
         the best-matching and second-best-matching neuron in the map
         for each input and then evaluating the positions.
 
-        A sample for which these two nodes are not adjacent counts as
+        A sample for which these two nodes are not ajacent conunts as
         an error. The topographic error is given by the
         the total number of errors divided by the total of samples.
 
@@ -588,13 +637,6 @@ class TestMinisom(unittest.TestCase):
         x = zeros((1, 2))
         w = ones((2, 2, 2))
         d = self.som._manhattan_distance(x, w)
-        assert_array_almost_equal(d, [[2., 2.],
-                                      [2., 2.]])
-
-    def test_chebyshev_distance(self):
-        x = array([1, 3])
-        w = ones((2, 2, 2))
-        d = self.som._chebyshev_distance(x, w)
         assert_array_almost_equal(d, [[2., 2.],
                                       [2., 2.]])
 
